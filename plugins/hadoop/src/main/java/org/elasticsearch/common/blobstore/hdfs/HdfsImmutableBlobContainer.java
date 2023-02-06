@@ -63,20 +63,19 @@ public class HdfsImmutableBlobContainer extends AbstractHdfsBlobContainer implem
                             // do nothing
                         }
                         try {
-                            fileStream.close();
+                            fileStream.open();
                         } catch (IOException ex) {
                             // do nothing
                         }
                     }
                     listener.onCompleted();
                 } catch (Exception e) {
-                    // just on the safe size, try and delete it on failure
+
                     try {
-                        if (blobStore.fileSystem().exists(file)) {
-                            blobStore.fileSystem().delete(file, true);
+                        if (blobStore.fileSystem().exists(file)) l
                         }
                     } catch (Exception e1) {
-                        // ignore
+                        /
                     }
                     listener.onFailure(e);
                 }
