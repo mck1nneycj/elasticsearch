@@ -328,10 +328,27 @@ public class LocalClusterFactory implements ClusterFactory<LocalClusterSpec, Loc
         }
 
         private void createKeystore() {
-            if (spec.getKeystorePassword() == null || spec.getKeystorePassword().isEmpty()) {
-                runToolScript("elasticsearch-keystore", null, "-v", "create");
-            } else {
-                runToolScript("elasticsearch-keystore", spec.getKeystorePassword() + "\n" + spec.getKeystorePassword(), "create", "-p");
+            try {
+                Path executable = OS.conditional(
+                    c -> c.onWindows(() -> distributionDir.resolve("bin").resolve("elasticsearch-keystore.bat"))
+                        .onUnix(() -> distributionDir.resolve("bin").resolve("elasticsearch-keystore"))
+                );
+
+                if (spec.getKeystorePassword() == null || spec.getKeystorePassword().isEmpty()) {
+                    ProcessUtils.exec(workingDir, executable, getEnvironmentVariables(), false, "-v", "create").waitFor();
+                } else {
+                    ProcessUtils.exec(
+                        spec.getKeystorePassword() + "\n" + spec.getKeystorePassword(),
+                        workingDir,
+                        executable,
+                        getEnvironmentVariables(),
+                        false,
+                        "create",
+                        "-p"
+                    ).waitFor();
+                }
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
             }
         }
 
@@ -341,7 +358,22 @@ public class LocalClusterFactory implements ClusterFactory<LocalClusterSpec, Loc
                     ? value
                     : spec.getKeystorePassword() + "\n" + value;
 
-                runToolScript("elasticsearch-keystore", input, "add", key);
+                try {
+                    ProcessUtils.exec(
+                        input,
+                        workingDir,
+                        OS.conditional(
+                            c -> c.onWindows(() -> distributionDir.resolve("bin").resolve("elasticsearch-keystore.bat"))
+                                .onUnix(() -> distributionDir.resolve("bin").resolve("elasticsearch-keystore"))
+                        ),
+                        getEnvironmentVariables(),
+                        false,
+                        "add",
+                        key
+                    ).waitFor();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
             });
         }
 
@@ -390,16 +422,22 @@ public class LocalClusterFactory implements ClusterFactory<LocalClusterSpec, Loc
 
                 LOGGER.info("Creating users for node '{}'", spec.getName());
                 for (User user : spec.getUsers()) {
-                    runToolScript(
-                        "elasticsearch-users",
-                        null,
-                        "useradd",
-                        user.getUsername(),
-                        "-p",
-                        user.getPassword(),
-                        "-r",
-                        user.getRole()
-                    );
+                    try {
+                        ProcessUtils.exec(
+                            workingDir,
+                            distributionDir.resolve("bin").resolve("elasticsearch-users"),
+                            getEnvironmentVariables(),
+                            false,
+                            "useradd",
+                            user.getUsername(),
+                            "-p",
+                            user.getPassword(),
+                            "-r",
+                            user.getRole()
+                        ).waitFor();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
             }
         }
@@ -443,14 +481,31 @@ public class LocalClusterFactory implements ClusterFactory<LocalClusterSpec, Loc
                     .map(p -> p.toUri().toString())
                     .toList();
 
+                Path pluginCommand = OS.conditional(
+                    c -> c.onWindows(() -> distributionDir.resolve("bin").resolve("elasticsearch-plugin.bat"))
+                        .onUnix(() -> distributionDir.resolve("bin").resolve("elasticsearch-plugin"))
+                );
                 if (spec.getVersion().onOrAfter("7.6.0")) {
-                    runToolScript(
-                        "elasticsearch-plugin",
-                        null,
-                        Stream.concat(Stream.of("install", "--batch"), toInstall.stream()).toArray(String[]::new)
-                    );
+                    try {
+                        ProcessUtils.exec(
+                            workingDir,
+                            pluginCommand,
+                            getEnvironmentVariables(),
+                            false,
+                            Stream.concat(Stream.of("install", "--batch"), toInstall.stream()).toArray(String[]::new)
+                        ).waitFor();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
                 } else {
-                    toInstall.forEach(plugin -> runToolScript("elasticsearch-plugin", null, "install", "--batch", plugin));
+                    toInstall.forEach(plugin -> {
+                        try {
+                            ProcessUtils.exec(workingDir, pluginCommand, getEnvironmentVariables(), false, "install", "--batch", plugin)
+                                .waitFor();
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                    });
                 }
             }
         }
@@ -582,22 +637,6 @@ public class LocalClusterFactory implements ClusterFactory<LocalClusterSpec, Loc
                 "-XX:ErrorFile=logs/hs_err_pid%p.log",
                 "-XX:ErrorFile=" + relativeLogsDir.resolve("hs_err_pid%p.log")
             );
-        }
-
-        private void runToolScript(String tool, String input, String... args) {
-            try {
-                ProcessUtils.exec(
-                    input,
-                    distributionDir,
-                    distributionDir.resolve("bin")
-                        .resolve(OS.<String>conditional(c -> c.onWindows(() -> tool + ".bat").onUnix(() -> tool))),
-                    getEnvironmentVariables(),
-                    false,
-                    args
-                ).waitFor();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
         }
 
         private String getServiceName() {
